@@ -1,0 +1,40 @@
+Find files with equal content and make them hard links to one another.
+
+The purpose of this program is to find files that have the same content
+and make them hard links to one another, thus saving disk space.
+
+Two files that have the same size, above a specified minimum, and are not
+already hard links of a single inode, will be compared byte by byte. 
+If they are identical, they have the same owner and permissions and all
+links are known for at least one of them, then they can be linked.
+
+This program can also be used to report on all existing hard links within
+a directory tree.
+
+
+Compiling:
+
+  make
+
+
+Usage:
+  linkcheck [ options ] directory ...
+
+  -m    make new links where needed
+  -r    report existing links
+  -z #  minimum file size (default is 1)
+
+
+Example:
+
+  linkcheck -m .
+
+to recursively scan all files in the current directory and below, and create
+hard links where possible. 
+
+
+Warning:
+
+This program knows nothing of extended attributes so those may be lost when
+hard links are being created.
+
