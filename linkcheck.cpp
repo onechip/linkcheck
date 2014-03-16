@@ -41,6 +41,7 @@ static off_t opt_min_filesize = 1;
 static bool opt_report_links = false;
 static bool opt_make_links = false;
 static bool opt_use_digest = true;
+static bool opt_verbose = false;
 
 
 static void report_sbuf(std::ostream& out, const struct stat& sbuf) {
@@ -179,9 +180,9 @@ public:
             fd = -1;
             return false;
         }
-        if (use_digest) {
-            std::cout << "digest: (" << sbuf.st_size << ") "
-                      << links.front() << std::endl;
+        if (use_digest && digest.empty()) {
+            if (opt_verbose)
+                std::cout << "digest: " << links.front() << std::endl;
             digest = compute_digest(fd,sbuf.st_size);
         }
         return true;
@@ -332,7 +333,7 @@ public:
 typedef std::pair<dev_t,ino_t> inode_id;
 typedef std::map<inode_id,inode_links> size_map_type;
 
-static void process_size(size_map_type& same_size, bool use_digest) {
+static void process_size(size_map_type& same_size, off_t size) {
     if (opt_report_links) {
         // report on files that are already linked
         for (size_map_type::iterator
@@ -344,9 +345,12 @@ static void process_size(size_map_type& same_size, bool use_digest) {
     if (same_size.size() <= 1)
         return;  // nothing to do
 
-    if (same_size.size() < 4)
-        use_digest = false;
+    const bool use_digest = same_size.size() > 2 && size >= 1024*1024;
 
+    if (opt_verbose)
+        std::cout << "inodes: " << same_size.size()
+                  << " of size " << size << " bytes" << std::endl;
+    
     // check for non-linked identical files
     for (size_map_type::iterator
              it = same_size.begin(); it != same_size.end(); ++it) {
@@ -431,15 +435,16 @@ static void scan_dir(all_files_type& index, const char* name) {
 
 
 static void usage() {
-    std::cerr << std::endl;
-    std::cerr << "Usage:" << std::endl;
-    std::cerr << "  linkcheck [ options ] directory ..." << std::endl;
-    std::cerr << std::endl;
-    std::cerr << "  -m\tmake new links where needed" << std::endl;
-    std::cerr << "  -r\treport existing links" << std::endl;
-    std::cerr << "  -s\tdo not use SHA-512 optimization" << std::endl;
-    std::cerr << "  -z #\tminimum file size (default is 1)" << std::endl;
-    std::cerr << std::endl;
+    std::cout << std::endl;
+    std::cout << "Usage:" << std::endl;
+    std::cout << "  linkcheck [ options ] directory ..." << std::endl;
+    std::cout << std::endl;
+    std::cout << "  -m\tmake new links where needed" << std::endl;
+    std::cout << "  -r\treport existing links" << std::endl;
+    std::cout << "  -s\tdo not use SHA-512 optimization" << std::endl;
+    std::cout << "  -v\tmore verbose" << std::endl;
+    std::cout << "  -z #\tminimum file size (default is 1)" << std::endl;
+    std::cout << std::endl;
 }
 
 
@@ -460,6 +465,10 @@ int main(int argc, char*argv[]) {
             opt_use_digest = false;
             break;
 
+        case 'v':
+            opt_verbose = true;
+            break;
+
         case 'z':
             if (argv[0][2])
                 opt_min_filesize = atol(argv[0]+2);
@@ -473,8 +482,6 @@ int main(int argc, char*argv[]) {
             }
             if (opt_min_filesize < 0)
                 opt_min_filesize = 0;
-            std::cerr << "linkcheck: min filesize: "
-                      << opt_min_filesize << std::endl;
             break;
             
         case 'm':
@@ -492,16 +499,20 @@ int main(int argc, char*argv[]) {
         usage();
         return 1;
     }
-  
+
+    if (opt_verbose && opt_min_filesize != 1)
+        std::cout << "mininum filesize: "
+                  << opt_min_filesize << std::endl;
+    
     all_files_type index;
     for (int i = 0; i < argc; ++i)
         scan_dir(index,argv[i]);
 
-    for (all_files_type::iterator
-             it = index.begin(); it != index.end(); ++it) {
-        if (it->first >= opt_min_filesize)
-            process_size(it->second,
-                         opt_use_digest && it->first >= 1024*1024);
+    for (all_files_type::reverse_iterator
+             it = index.rbegin(); it != index.rend(); ++it) {
+        if (it->first < opt_min_filesize)
+            break;
+        process_size(it->second, it->first);
     }
    
     return 0;

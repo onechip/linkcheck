@@ -33,6 +33,7 @@ Usage:
   -m    make new links where needed
   -r    report existing links
   -s    don't use SHA-512 optimization
+  -v    be more verbose
   -z #  minimum file size (default is 1)
 
 
