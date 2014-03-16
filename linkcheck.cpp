@@ -380,6 +380,8 @@ static void process_size(size_map_type& same_size, off_t size) {
                         continue;
                     }
                     inode_links::link_files(it->second,jt->second);
+                    if (it->second.empty())
+                        break;
                 }
                 else
                     std::cout << "same: '"
