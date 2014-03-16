@@ -8,8 +8,18 @@ already hard links of a single inode, will be compared byte by byte.
 If they are identical, they have the same owner and permissions and all
 links are known for at least one of them, then they can be linked.
 
+As an optimization, if 4 or more inodes have the same size and the size
+is greater than some threshold (currently 1 MiB), then an SHA-512 digest
+is computed for each file and those are compared instead of the files
+themselves.  This optimization may be disabled with the -s option.
+
 This program can also be used to report on all existing hard links within
 a directory tree.
+
+Warning:
+
+This program knows nothing of extended attributes so those may be lost when
+hard links are being created.
 
 
 Compiling:
@@ -22,6 +32,7 @@ Usage:
 
   -m    make new links where needed
   -r    report existing links
+  -s    don't use SHA-512 optimization
   -z #  minimum file size (default is 1)
 
 
@@ -33,8 +44,4 @@ to recursively scan all files in the current directory and below, and create
 hard links where possible. 
 
 
-Warning:
-
-This program knows nothing of extended attributes so those may be lost when
-hard links are being created.
 

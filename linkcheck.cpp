@@ -15,8 +15,10 @@
 #include <unistd.h>
 #include <utime.h>
 
+#include <openssl/sha.h>
 
-/* Copyright 2013 Chris Studholme.
+
+/* Copyright 2014 Chris Studholme.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -38,6 +40,7 @@ static const unsigned DIFF_BUFSIZE = 1024*1024;
 static off_t opt_min_filesize = 1;
 static bool opt_report_links = false;
 static bool opt_make_links = false;
+static bool opt_use_digest = true;
 
 
 static void report_sbuf(std::ostream& out, const struct stat& sbuf) {
@@ -51,7 +54,6 @@ static void report_sbuf(std::ostream& out, const struct stat& sbuf) {
         << sbuf.st_atime << ',' << sbuf.st_mtime << ',' << sbuf.st_ctime
         << std::endl;
 }
-
 
 static bool equal_sbuf(const struct stat& s1, const struct stat& s2) {
     // NOTE: I don't think atime should be included here!
@@ -69,7 +71,6 @@ static bool equal_sbuf(const struct stat& s1, const struct stat& s2) {
             s1.st_mtime == s2.st_mtime &&
             s1.st_ctime == s2.st_ctime);
 }
-
 
 static int compare_file(int fd1, int fd2) {
     if (lseek(fd1,0,SEEK_SET) != 0) {
@@ -100,6 +101,39 @@ static int compare_file(int fd1, int fd2) {
     return 0;
 }
 
+static std::basic_string<unsigned char> compute_digest(int fd, off_t total) {
+    std::basic_string<unsigned char> result;
+    if (lseek(fd,0,SEEK_SET) != 0) {
+        std::cerr << "linkcheck: failed to seek" << std::endl;
+        return result;
+    }
+
+    SHA512_CTX ctx;
+    int r = SHA512_Init(&ctx);
+    assert(r == 1);
+
+    for (;;) {
+        unsigned char buf[DIFF_BUFSIZE];
+        ssize_t n = read(fd,buf,sizeof(buf));
+        if (n <= 0) break;
+
+        r = SHA512_Update(&ctx, buf, n);
+        assert(r == 1);
+        total -= n;
+    }
+
+
+    if (total != 0) {
+        std::cerr << "linkcheck: failed to hash" << std::endl;
+        return result;
+    }
+
+    result.resize(SHA512_DIGEST_LENGTH);
+    r = SHA512_Final(&result[0], &ctx);
+    assert(r == 1);
+    return result;
+}
+
 
 /* Links associated with specific inode.
  */
@@ -111,6 +145,8 @@ private:
 
     typedef std::vector<std::string> links_type;
     links_type links;
+
+    std::basic_string<unsigned char> digest;
 
 public:
     inode_links() : fd(-1) {}
@@ -126,7 +162,7 @@ public:
         }
     }
 
-    bool open() {
+    bool open(bool use_digest) {
         if (fd != -1)
             return true;
         assert(!links.empty());
@@ -138,11 +174,17 @@ public:
         lock.l_whence = SEEK_SET;
         lock.l_start = 0;
         lock.l_len = 0;
-        if (fcntl(fd,F_SETLKW,&lock) == 0)
-            return true;
-        ::close(fd);
-        fd = -1;
-        return false;
+        if (fcntl(fd,F_SETLKW,&lock) != 0) {
+            ::close(fd);
+            fd = -1;
+            return false;
+        }
+        if (use_digest) {
+            std::cout << "digest: (" << sbuf.st_size << ") "
+                      << links.front() << std::endl;
+            digest = compute_digest(fd,sbuf.st_size);
+        }
+        return true;
     }
 
     inline bool empty() const {
@@ -159,6 +201,10 @@ public:
 
     inline bool missing_links() const {
         return links.size() != sbuf.st_nlink;
+    }
+
+    inline bool has_digest() const {
+        return !digest.empty();
     }
 
     void report(std::ostream& out = std::cout) const {
@@ -182,7 +228,10 @@ public:
     }
 
     static int compare(inode_links& f1, inode_links& f2) {
-        return compare_file(f1.fd,f2.fd);
+        if (f1.digest.empty() || f2.digest.empty())
+            return compare_file(f1.fd,f2.fd);
+        assert(f1.digest.size() == f2.digest.size());
+        return f1.digest.compare(f2.digest);
     }
 
     // relink all files in src to this inode
@@ -283,7 +332,7 @@ public:
 typedef std::pair<dev_t,ino_t> inode_id;
 typedef std::map<inode_id,inode_links> size_map_type;
 
-static void process_size(size_map_type& same_size) {
+static void process_size(size_map_type& same_size, bool use_digest) {
     if (opt_report_links) {
         // report on files that are already linked
         for (size_map_type::iterator
@@ -295,12 +344,15 @@ static void process_size(size_map_type& same_size) {
     if (same_size.size() <= 1)
         return;  // nothing to do
 
+    if (same_size.size() < 4)
+        use_digest = false;
+
     // check for non-linked identical files
     for (size_map_type::iterator
              it = same_size.begin(); it != same_size.end(); ++it) {
         if (it->second.empty())
             continue;
-        if (!it->second.open()) {
+        if (!it->second.open(use_digest)) {
             std::cerr << "linkcheck: failed to open '"
                       << it->second.name() << "'" << std::endl;
             continue;
@@ -309,14 +361,22 @@ static void process_size(size_map_type& same_size) {
         for (++jt; jt != same_size.end(); ++jt) {
             if (jt->second.empty())
                 continue;
-            if (!jt->second.open()) {
+            if ((!it->second.has_digest() ||
+                 !jt->second.has_digest()) &&
+                !jt->second.open(use_digest)) {
                 std::cerr << "linkcheck: failed to open '"
                           << jt->second.name() << "'" << std::endl;
                 continue;
             }
             if (inode_links::compare(it->second,jt->second) == 0) {
-                if (opt_make_links)
+                if (opt_make_links) {
+                    if (!jt->second.open(use_digest)) {
+                        std::cerr << "linkcheck: failed to open '"
+                                  << jt->second.name() << "'" << std::endl;
+                        continue;
+                    }
                     inode_links::link_files(it->second,jt->second);
+                }
                 else
                     std::cout << "same: '"
                               << it->second.name() << "' '"
@@ -377,6 +437,7 @@ static void usage() {
     std::cerr << std::endl;
     std::cerr << "  -m\tmake new links where needed" << std::endl;
     std::cerr << "  -r\treport existing links" << std::endl;
+    std::cerr << "  -s\tdo not use SHA-512 optimization" << std::endl;
     std::cerr << "  -z #\tminimum file size (default is 1)" << std::endl;
     std::cerr << std::endl;
 }
@@ -393,6 +454,10 @@ int main(int argc, char*argv[]) {
         switch(argv[0][1]) {
         case 'r':
             opt_report_links = true;
+            break;
+
+        case 's':
+            opt_use_digest = false;
             break;
 
         case 'z':
@@ -435,7 +500,8 @@ int main(int argc, char*argv[]) {
     for (all_files_type::iterator
              it = index.begin(); it != index.end(); ++it) {
         if (it->first >= opt_min_filesize)
-            process_size(it->second);
+            process_size(it->second,
+                         opt_use_digest && it->first >= 1024*1024);
     }
    
     return 0;

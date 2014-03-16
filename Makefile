@@ -3,8 +3,8 @@ CXX		= g++
 CXXLD		= g++
 
 PREFFLAGS	= -O2
-CXXFLAGS	= $(PREFFLAGS) -Wall
-LDFLAGS		= 
+CXXFLAGS	= $(PREFFLAGS) -Wall -Wextra
+LDFLAGS		= -lcrypto
 
 ALL_PROGS	= linkcheck
 COMMON_OBJS	= 
