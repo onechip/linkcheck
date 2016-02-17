@@ -18,7 +18,7 @@
 #include <openssl/sha.h>
 
 
-/* Copyright 2014 Chris Studholme.
+/* Copyright 2016 Chris Studholme.
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -38,6 +38,7 @@
 static const unsigned DIFF_BUFSIZE = 1024*1024;
 
 static off_t opt_min_filesize = 1;
+static bool opt_visit_hidden = false;
 static bool opt_report_links = false;
 static bool opt_make_links = false;
 static bool opt_use_digest = true;
@@ -414,7 +415,10 @@ static void scan_dir(all_files_type& index, const char* name) {
 
     struct dirent *ent;
     while ((ent=readdir(dir)) != NULL) {
-        if (strcmp(ent->d_name,".") == 0 || strcmp(ent->d_name,"..") == 0)
+        if (ent->d_name[0] == '.' &&
+            (!opt_visit_hidden ||
+             strcmp(ent->d_name,".") == 0 ||
+             strcmp(ent->d_name,"..") == 0))
             continue;  // ignore
         
         strcpy(filename,ent->d_name);
@@ -441,6 +445,7 @@ static void usage() {
     std::cout << "Usage:" << std::endl;
     std::cout << "  linkcheck [ options ] directory ..." << std::endl;
     std::cout << std::endl;
+    std::cout << "  -a\tinclude hidden files and directories" << std::endl;
     std::cout << "  -m\tmake new links where needed" << std::endl;
     std::cout << "  -r\treport existing links" << std::endl;
     std::cout << "  -s\tdo not use SHA-512 optimization" << std::endl;
@@ -459,6 +464,10 @@ int main(int argc, char*argv[]) {
             break;
         }      
         switch(argv[0][1]) {
+        case 'a':
+            opt_visit_hidden = true;
+            break;
+
         case 'r':
             opt_report_links = true;
             break;
